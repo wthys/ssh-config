@@ -106,22 +106,16 @@ class SshConfig:
         if (
                 # No args or kwargs
                 (len(args) == 0 and len(kwargs) == 0)
-                # Entry is None or not specified and all supplied hostnames have None values
+                # Entry is None or not specified and all supplied hostnames
+                # have None values or no options
                 or ((len(args) == 0 or (len(args) == 1 and args[0] is None))
-                        and len([1 for k in kwargs if not kwargs[k] is None]) == 0)
+                        and len([1 for k in kwargs if not kwargs[k] is None or
+                            len(kwargs[k]) == 0]) == 0)
            ):
             # Nothing to do, just exit
             return 
 
-        entry = None
-
-	if host not in self or host is None:
-            logging.debug("SC.set: host not present or None")
-            entry = SshConfigEntry(len(self.__entries))
-            self.__entries[host_name] = entry
-            logging.debug("SC.set: entry for %s is %s" % (host_name, repr(entry)))
-        else:
-            entry = self.get(host_name)
+        entry = SshConfigEntry(len(self.__entries))
 
 	if len(args) == 1:
             logging.debug("SC.set: Entry, before: %s" % repr(args[0]))
@@ -132,6 +126,42 @@ class SshConfig:
 	
         if len(kwargs) > 0:
             entry.set(**kwargs)
+
+        # Guarantee that an entry will have entries
+        if len(entry) > 0:
+            if host not in self or (host is None and "default" not in
+                    self.__entries):
+                logging.debug("SC.set: host not present or None")
+                self.__entries[host_name] = entry
+                logging.debug("SC.set: entry for %s is %s" % (host_name, repr(entry)))
+            else:
+                self.get(host).set(entry)
+
+    def __delitem__(self, host):
+        """ Remove an entire host entry """
+        if host in self:
+            del self.__entries["ssh_%s" % host]
+        elif host is None:
+            del self.__entries["default"]
+        else:
+            raise KeyError(host)
+
+    def remove(self, host, *options):
+        """ Remove a host entry or specific options in a host entry.
+        
+        remove(host)
+            host:	the host for which to remove the entire entry
+            
+        remove(host, <option>...)
+            host:	the host for which to remove specified options
+            <option>:	the name of the option to be removed so that it does
+                        not exist afterwards. It need not exist beforehand.
+        """
+        if len(options) == 0:
+            del self[host]
+        else:
+            entry = self.get(host)
+            entry.remove(*options)
 
     def __contains__(self, host):
         """ If we have an entry for the specified host
@@ -155,20 +185,29 @@ class SshConfig:
 
         save(dest)
             dest:   A filename or a file-like object. If the file already
-                    exists, it will be truncated.
+                    exists, it will be overwritten.
         """
-        pass
+        if (isinstance(dest, file)):
+            dest.write(str(self))
+        elif isinstance(dest,str):
+            f = open(dest, "w")
+            f.writelines(str(self).split("\n"))
+            f.close()
+        else:
+            raise TypeError("Argument is not a file or str")
 
-    def load(self, config, update=False):
+    def load(self, config):
         """ Load a configuration.
 
-        load(config, update=False)
+        load(config)
             config: A configuration to load. Must be an SshConfig, a file-like
                     object or a filename.
-            update: When set, updates existing entries. Otherwise ignores new entries
-                    for existing hosts.
         """
-        pass
+        cfg = load_sshconfig(config)
+        hosts = [None]
+        hosts.extend(cfg.hosts())
+        for h in hosts:
+            self.set(h, cfg.get(h))
 
     def __repr__(self):
         rep = "SshConfig("
@@ -211,12 +250,15 @@ class SshConfigEntry:
 	
         if llist is not None and len(llist) > 0:
             for t in llist:
-                self.__options[str(t[0])] = t[1]
+                if not (t[1] is None or t[0] is None):
+                    self.__options[str(t[0])] = t[1]
         if ddict is not None and len(ddict) > 0:
             for o, v in ddict.items():
-                self.__options[o] = v
+                if not (o is None or v is None):
+                    self.__options[o] = v
         if ttuple is not None and len(ttuple) >= 2:
-            self.__options[ttuple[0]] = ttuple[1]
+            if not (ttuple[0] is None or ttuple[1] is None):
+                self.__options[ttuple[0]] = ttuple[1]
 	
     def __init__(self, priority, *args, **kwargs):
         """ Create an SshConfigEntry.
@@ -281,7 +323,8 @@ class SshConfigEntry:
 	    return None
 
     def set(self, *args, **kwargs):
-        """ Set the value for a specific option
+        """ Set the value for a specific option. Options with a name or value
+        of None will be ignored.
 
         set(options)
             options:    An SshConfigEntry or a dict-like object with SSH
@@ -320,14 +363,41 @@ class SshConfigEntry:
         if len(kwargs) > 0:
             self.__add_to_opts(ddict=kwargs)
         #logging.debug("SCE.__options = %s" % self.__options)
+    
+    def remove(self, *options):
+        """ Remove the specified entries.
 
-    def contains(self, option):
+        remove(<option>, ...)
+            <option>:	The option to remove. It will not exist afterwards. It
+                        need not exist beforehand.
+        """
+        if len(options) < 1:
+            raise TypeError("remove() takes at least one paramter (none given)")
+        else:
+            for opt in options:
+                try:
+                    del self[opt]
+                except KeyError,e :
+                    pass
+
+    def __delitem__(self, option):
+        """ Remove the specified option."""
+        if option in self:
+            del self.__options[option]
+        else:
+            raise KeyError(option)
+
+    def __contains__(self, option):
         """ Whether the SshConfigEntry contains the specified option
 
-        contains(option)
+        __contains__(option)
             option: A valid SSH option
         """
-        return self.__options.has_key(option)
+        return option in self.__options
+
+    def __len__(self):
+        """ Return the number of defined options """
+        return len(self.__options)
 
     def to_dict(self):
         """ Converts the SshConfigEntry to a dict
