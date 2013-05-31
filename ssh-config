@@ -26,9 +26,162 @@
 #   POSSIBILITY OF SUCH DAMAGE.
 #
 
-from be.zardof.sshconfig import SshConfig, SshConfigEntry
+import sys
+import os
+
+from be.zardof.sshconfig import SshConfig, SshConfigEntry, load_sshconfig
 
 from argparse import ArgumentParser
 
-PARSER = ArgumentParser("Manage your ssh_config file.")
+class Action:
+    LIST = 1
+    SET = 2
+    DEL = 3
+    TEST = 4
 
+class OutFormats:
+    SSH = 1
+    MACHINE = 2
+    DEFAULT = 3
+
+def format_options(options):
+    ropts = {}
+    if options is None:
+        return ropts
+    for opt in options:
+        k = opt.split("=")
+        if len(k) > 1:
+            ropts[k[0]] = k[1]
+        else:
+            ropts[k[0]] = None
+
+    return ropts
+
+PARSER = ArgumentParser(description="Manage your ssh_config file.")
+
+
+SUBS = PARSER.add_mutually_exclusive_group(required=True)
+SUBS.add_argument("-l", "--list", action="store_const",
+        dest="action",const=Action.LIST, help=" ".join(["List options. If",
+            "combined with a hostname a hostname, show only the entries for", 
+            "that hostname. If also combined with options, only list the", 
+            "hosts with that option and the value of the option."]))
+
+SUBS.add_argument("-s", "--set", action="store_const",
+        dest="action",const=Action.SET, help=" ".join(["Set options. If no",
+            "hostname is specified, set the default."]))
+
+SUBS.add_argument("-d", "--delete", action="store_const",
+        dest="action",const=Action.DEL, help=" ".join(["Remove an option or",
+            "host. If the option did not exist, exit. If no options are",
+            "specified, delete the host. If the last options is removed,",
+            "the host entry is also removed."]))
+
+SUBS.add_argument("-t", "--test", action="store_const",
+        dest="action",const=Action.TEST, help=" ".join(["The same behaviour", 
+        "as --list but does not produce output and returns succes if --list",
+        "would have produced output."]))
+
+PARSER.add_argument("-H", "--hostname", dest="hostname", help="Use this host")
+PARSER.add_argument("-o", "--option", action="append", dest="option", 
+    help=" ".join(["Option to set, remove or query. When setting, use the", 
+    "format OptionName=OptionValue. Can be supplied multiple times."]))
+
+PARSER.add_argument("-f", "--file", dest="file", 
+    help=" ".join(["The ssh_config file to use. If omitted, use the default",
+        "ssh_config file."]))
+
+PARSER.add_argument("-S", "--ssh", dest="format", action="store_const",
+        const=OutFormats.SSH, help=" ".join(["Use ssh_config compatible",
+            "output. Useful if you want to use the output for constructing",
+            "a new ssh_config file"]))
+
+PARSER.add_argument("-p", dest="format", action="store_const",
+        const=OutFormats.MACHINE, help=" ".join(["Use a machine readable",
+            "output. It will use ':' as a delimiter, unless otherwise specified."]))
+PARSER.add_argument("-D", "--delimiter", dest="delimiter", 
+        help="Delimiter to use when using -p.")
+
+
+opts= PARSER.parse_args()
+
+print opts
+
+sshfile = opts.file
+config = None
+if sshfile is None:
+    config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
+else:
+    config = load_sshconfig(sshfile)
+
+#print config
+
+host = opts.hostname
+options = opts.option
+ropts = format_options(options)
+if opts.action == Action.LIST:
+    if host is None:
+        if len(ropts) > 0:
+            for h in config.hosts():
+                for opt, comp in ropts.items():
+                    val = config.get(h, opt)
+                    if comp is None or val == comp:
+                        print "%s:%s = %s" % (h, opt, val)
+        else:
+            for h in config.hosts():
+                entry = config.get(h)
+                for opt, val in entry.items():
+                    print "%s:%s = %s" % (h, opt, val)
+    else:
+        entry = config.get(host)
+        if entry is None:
+            sys.exit("Host %s cannot be found" % host)
+        if len(ropts) > 0:
+            for opt, comp in ropts.items():
+                val = entry.get(opt)
+                if comp is None or val == comp:
+                    print "%s = %s" % (opt, val)
+        else:
+            for opt, val in entry.items():
+                print "%s = %s" % (opt, val)
+
+elif opts.action == Action.TEST:
+    if host is None:
+        if len(ropts) > 0:
+            for h in config.hosts():
+                for opt, comp in ropts.items():
+                    val = config.get(h, opt)
+                    if comp is None or val == comp:
+                        sys.exit(0)
+            sys.exit(1)
+        else:
+            if len(config.hosts()) > 0:
+                sys.exit(0)
+            else:
+                sys.exit(1)
+    else:
+        entry = config.get(host)
+        if entry is None:
+            sys.exit(1)
+        if len(ropts) > 0:
+            for opt, comp in ropts.items():
+                val = entry.get(opt)
+                if comp is None or val == comp:
+                    sys.exit(0)
+            sys.exit(1)
+        else:
+            sys.exit(0)
+
+elif opts.action == Action.SET:
+    if options is None or len(options) == 0:
+        sys.exit("No options specified")
+    else:
+        for opt, val in ropts.items():
+            if not val is None:
+                config.set(host, {opt: val})
+            
+elif opts.action == Action.DEL:
+    pass
+else:
+    sys.exit("What are you playing at?")
+    
