@@ -42,7 +42,6 @@ class Action:
 class OutFormats:
     SSH = 1
     MACHINE = 2
-    DEFAULT = 3
 
 def format_options(options):
     ropts = {}
@@ -58,6 +57,7 @@ def format_options(options):
     return ropts
 
 PARSER = ArgumentParser(description="Manage your ssh_config file.")
+PARSER.set_defaults(format=OutFormats.SSH)
 
 
 SUBS = PARSER.add_mutually_exclusive_group(required=True)
@@ -98,40 +98,76 @@ PARSER.add_argument("-S", "--ssh", dest="format", action="store_const",
 
 PARSER.add_argument("-p", dest="format", action="store_const",
         const=OutFormats.MACHINE, help=" ".join(["Use a machine readable",
-            "output. It will use ':' as a delimiter, unless otherwise specified."]))
-PARSER.add_argument("-D", "--delimiter", dest="delimiter", 
+            "output. It will use ':' as a delimiter, unless otherwise",
+            "specified. The fields will be in the form",
+            "<hostname>:<priority>:<option>:<value>, with ':' being",
+            "replaced by your delimiter of choice."]))
+PARSER.add_argument("-D", "--delimiter", dest="delimiter", default=":",
         help="Delimiter to use when using -p.")
 
 
 opts= PARSER.parse_args()
 
-print opts
+def ssh(config):
+    print config
+
+def machine(config):
+    f = "%(host)s%(delim)s%(priority)d%(delim)s%(option)s%(delim)s%(value)s" 
+    hosts = [None]
+    hosts.extend(config.hosts())
+    for h in hosts:
+        entry = config.get(h)
+        if not entry is None:
+            p = entry.priority()
+            hn = h
+            if hn is None:
+                hn = ""
+            for opt, val in entry.items():
+                print f % {"host": hn, "delim": opts.delimiter, "priority": p, "option": opt, "value": val}
+
+FORMATS = {}
+FORMATS[OutFormats.SSH] = ssh
+FORMATS[OutFormats.MACHINE] = machine
 
 sshfile = opts.file
+outfile = sshfile
 config = None
 if sshfile is None:
     config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
 else:
     config = load_sshconfig(sshfile)
 
-#print config
-
 host = opts.hostname
 options = opts.option
 ropts = format_options(options)
 if opts.action == Action.LIST:
     if host is None:
+        hosts = []
+        if not config.get(None) is None:
+            hosts.append(None)
+        hosts.extend(config.hosts())
         if len(ropts) > 0:
-            for h in config.hosts():
-                for opt, comp in ropts.items():
-                    val = config.get(h, opt)
-                    if comp is None or val == comp:
-                        print "%s:%s = %s" % (h, opt, val)
-        else:
-            for h in config.hosts():
+            displayed = SshConfig()
+            for h in hosts:
                 entry = config.get(h)
+                he = SshConfigEntry(entry.priority())
+                for opt, comp in ropts.items():
+                    val = entry.get(opt)
+                    if comp is None or val == comp:
+                        he.set(opt, val)
+                if len(he) > 0:
+                    displayed.set(h, he)
+            FORMATS[opts.format](displayed)
+        else:
+            displayed = SshConfig()
+            for h in hosts:
+                entry = config.get(h)
+                he = SshConfigEntry(entry.priority())
                 for opt, val in entry.items():
-                    print "%s:%s = %s" % (h, opt, val)
+                    he.set(opt, val)
+                if len(he) > 0:
+                    displayed.set(h, he)
+            FORMATS[opts.format](displayed)
     else:
         entry = config.get(host)
         if entry is None:
@@ -147,11 +183,15 @@ if opts.action == Action.LIST:
 
 elif opts.action == Action.TEST:
     if host is None:
+        hosts = []
+        if not config.get(None) is None:
+            hosts.append(None)
+        hosts.extend(config.hosts())
         if len(ropts) > 0:
-            for h in config.hosts():
+            for h in hosts:
+                entry = config.get(h)
                 for opt, comp in ropts.items():
-                    val = config.get(h, opt)
-                    if comp is None or val == comp:
+                    if opt in entry and (comp is None or entry.get(opt) == comp):
                         sys.exit(0)
             sys.exit(1)
         else:
@@ -165,23 +205,44 @@ elif opts.action == Action.TEST:
             sys.exit(1)
         if len(ropts) > 0:
             for opt, comp in ropts.items():
-                val = entry.get(opt)
-                if comp is None or val == comp:
+                if opt in entry and (comp is None or entry.get(opt) == comp):
                     sys.exit(0)
             sys.exit(1)
         else:
-            sys.exit(0)
+            sys.exit(1)
 
 elif opts.action == Action.SET:
-    if options is None or len(options) == 0:
+    if len(ropts) == 0:
         sys.exit("No options specified")
     else:
-        for opt, val in ropts.items():
-            if not val is None:
-                config.set(host, {opt: val})
+        config.set(host, **ropts)
+        config.save(outfile)
             
 elif opts.action == Action.DEL:
-    pass
+    if host is None:
+        hosts = []
+        if host is None:
+            hosts.append(None)
+        hosts.extend(config.hosts())
+        if len(ropts) > 0:
+            for h in hosts:
+                entry = config.get(h)
+                for opt in ropts:
+                    entry.remove(opt)
+            config.save(outfile)
+        else:
+            sys.exit("No options specified")
+    else:
+        entry = config.get(host)
+        if entry is None:
+            sys.exit(0)
+        if len(ropts) > 0:
+            entry.remove(*ropts.keys())
+            config.save(outfile)
+        else:
+            config.remove(host)
+            config.save(outfile)
+
 else:
     sys.exit("What are you playing at?")
     

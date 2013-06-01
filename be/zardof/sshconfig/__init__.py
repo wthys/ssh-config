@@ -191,7 +191,7 @@ class SshConfig:
             dest.write(str(self))
         elif isinstance(dest,str):
             f = open(dest, "w")
-            f.writelines(str(self).split("\n"))
+            f.write(str(self))
             f.close()
         else:
             raise TypeError("Argument is not a file or str")
