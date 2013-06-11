@@ -33,15 +33,30 @@ from be.zardof.sshconfig import SshConfig, SshConfigEntry, load_sshconfig
 
 from argparse import ArgumentParser
 
-class Action:
-    LIST = 1
-    SET = 2
-    DEL = 3
-    TEST = 4
-
 class OutFormats:
     SSH = 1
     MACHINE = 2
+
+def format_ssh(config, args):
+    print config
+
+def format_machine(config, args):
+    f = "%(host)s%(delim)s%(priority)d%(delim)s%(option)s%(delim)s%(value)s" 
+    hosts = [None]
+    hosts.extend(config.hosts())
+    for h in hosts:
+        entry = config.get(h)
+        if not entry is None:
+            p = entry.priority()
+            hn = h
+            if hn is None:
+                hn = ""
+            for opt, val in entry.items():
+                print f % {"host": hn, "delim": args.delimiter, "priority": p, "option": opt, "value": val}
+
+FORMATS = {}
+FORMATS[OutFormats.SSH] = format_ssh
+FORMATS[OutFormats.MACHINE] = format_machine
 
 def format_options(options):
     ropts = {}
@@ -56,91 +71,18 @@ def format_options(options):
 
     return ropts
 
-PARSER = ArgumentParser(description="Manage your ssh_config file.")
-PARSER.set_defaults(format=OutFormats.SSH)
+def ssh_list(args):
+    sshfile = opts.file
+    outfile = sshfile
+    config = None
+    if sshfile is None:
+        config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
+    else:
+        config = load_sshconfig(sshfile)
 
-
-SUBS = PARSER.add_mutually_exclusive_group(required=True)
-SUBS.add_argument("-l", "--list", action="store_const",
-        dest="action",const=Action.LIST, help=" ".join(["List options. If",
-            "combined with a hostname a hostname, show only the entries for", 
-            "that hostname. If also combined with options, only list the", 
-            "hosts with that option and the value of the option."]))
-
-SUBS.add_argument("-s", "--set", action="store_const",
-        dest="action",const=Action.SET, help=" ".join(["Set options. If no",
-            "hostname is specified, set the default."]))
-
-SUBS.add_argument("-d", "--delete", action="store_const",
-        dest="action",const=Action.DEL, help=" ".join(["Remove an option or",
-            "host. If the option did not exist, exit. If no options are",
-            "specified, delete the host. If the last options is removed,",
-            "the host entry is also removed."]))
-
-SUBS.add_argument("-t", "--test", action="store_const",
-        dest="action",const=Action.TEST, help=" ".join(["The same behaviour", 
-        "as --list but does not produce output and returns succes if --list",
-        "would have produced output."]))
-
-PARSER.add_argument("-H", "--hostname", dest="hostname", help="Use this host")
-PARSER.add_argument("-o", "--option", action="append", dest="option", 
-    help=" ".join(["Option to set, remove or query. When setting, use the", 
-    "format OptionName=OptionValue. Can be supplied multiple times."]))
-
-PARSER.add_argument("-f", "--file", dest="file", 
-    help=" ".join(["The ssh_config file to use. If omitted, use the default",
-        "ssh_config file."]))
-
-PARSER.add_argument("-S", "--ssh", dest="format", action="store_const",
-        const=OutFormats.SSH, help=" ".join(["Use ssh_config compatible",
-            "output. Useful if you want to use the output for constructing",
-            "a new ssh_config file"]))
-
-PARSER.add_argument("-p", dest="format", action="store_const",
-        const=OutFormats.MACHINE, help=" ".join(["Use a machine readable",
-            "output. It will use ':' as a delimiter, unless otherwise",
-            "specified. The fields will be in the form",
-            "<hostname>:<priority>:<option>:<value>, with ':' being",
-            "replaced by your delimiter of choice."]))
-PARSER.add_argument("-D", "--delimiter", dest="delimiter", default=":",
-        help="Delimiter to use when using -p.")
-
-
-opts= PARSER.parse_args()
-
-def ssh(config):
-    print config
-
-def machine(config):
-    f = "%(host)s%(delim)s%(priority)d%(delim)s%(option)s%(delim)s%(value)s" 
-    hosts = [None]
-    hosts.extend(config.hosts())
-    for h in hosts:
-        entry = config.get(h)
-        if not entry is None:
-            p = entry.priority()
-            hn = h
-            if hn is None:
-                hn = ""
-            for opt, val in entry.items():
-                print f % {"host": hn, "delim": opts.delimiter, "priority": p, "option": opt, "value": val}
-
-FORMATS = {}
-FORMATS[OutFormats.SSH] = ssh
-FORMATS[OutFormats.MACHINE] = machine
-
-sshfile = opts.file
-outfile = sshfile
-config = None
-if sshfile is None:
-    config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
-else:
-    config = load_sshconfig(sshfile)
-
-host = opts.hostname
-options = opts.option
-ropts = format_options(options)
-if opts.action == Action.LIST:
+    host = args.hostname
+    options = args.option
+    ropts = format_options(options)
     if host is None:
         hosts = []
         if not config.get(None) is None:
@@ -157,7 +99,7 @@ if opts.action == Action.LIST:
                         he.set(opt, val)
                 if len(he) > 0:
                     displayed.set(h, he)
-            FORMATS[opts.format](displayed)
+            FORMATS[args.format](displayed, args)
         else:
             displayed = SshConfig()
             for h in hosts:
@@ -167,7 +109,7 @@ if opts.action == Action.LIST:
                     he.set(opt, val)
                 if len(he) > 0:
                     displayed.set(h, he)
-            FORMATS[opts.format](displayed)
+            FORMATS[opts.format](displayed, args)
     else:
         entry = config.get(host)
         if entry is None:
@@ -181,7 +123,18 @@ if opts.action == Action.LIST:
             for opt, val in entry.items():
                 print "%s = %s" % (opt, val)
 
-elif opts.action == Action.TEST:
+def ssh_test(args):
+    sshfile = opts.file
+    outfile = sshfile
+    config = None
+    if sshfile is None:
+        config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
+    else:
+        config = load_sshconfig(sshfile)
+
+    host = args.hostname
+    options = args.option
+    ropts = format_options(options)
     if host is None:
         hosts = []
         if not config.get(None) is None:
@@ -211,14 +164,18 @@ elif opts.action == Action.TEST:
         else:
             sys.exit(1)
 
-elif opts.action == Action.SET:
-    if len(ropts) == 0:
-        sys.exit("No options specified")
+def ssh_delete(args):
+    sshfile = opts.file
+    outfile = sshfile
+    config = None
+    if sshfile is None:
+        config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
     else:
-        config.set(host, **ropts)
-        config.save(outfile)
-            
-elif opts.action == Action.DEL:
+        config = load_sshconfig(sshfile)
+
+    host = args.hostname
+    options = args.option
+    ropts = format_options(options)
     if host is None:
         hosts = []
         if host is None:
@@ -243,6 +200,76 @@ elif opts.action == Action.DEL:
             config.remove(host)
             config.save(outfile)
 
-else:
-    sys.exit("What are you playing at?")
     
+def ssh_set(args):
+    sshfile = opts.file
+    outfile = sshfile
+    config = None
+    if sshfile is None:
+        config = load_sshconfig(os.path.expanduser("~/.ssh/config"))
+    else:
+        config = load_sshconfig(sshfile)
+
+    host = args.hostname
+    options = args.option
+    ropts = format_options(options)
+    if len(ropts) == 0:
+        sys.exit("No options specified")
+    else:
+        config.set(host, **ropts)
+        config.save(outfile)
+
+
+PARSER = ArgumentParser(description="Manage your ssh_config file.")
+PARSER.set_defaults(format=OutFormats.SSH)
+
+
+SUBS = PARSER.add_mutually_exclusive_group(required=True)
+SUBS.add_argument("-l", "--list", action="store_const",
+        dest="action",const=ssh_list, help=" ".join(["List options. If",
+            "combined with a hostname a hostname, show only the entries for", 
+            "that hostname. If also combined with options, only list the", 
+            "hosts with that option and the value of the option."]))
+
+SUBS.add_argument("-s", "--set", action="store_const",
+        dest="action",const=ssh_set, help=" ".join(["Set options. If no",
+            "hostname is specified, set the default."]))
+
+SUBS.add_argument("-d", "--delete", action="store_const",
+        dest="action",const=ssh_delete, help=" ".join(["Remove an option or",
+            "host. If the option did not exist, exit. If no options are",
+            "specified, delete the host. If the last options is removed,",
+            "the host entry is also removed."]))
+
+SUBS.add_argument("-t", "--test", action="store_const",
+        dest="action",const=ssh_test, help=" ".join(["The same behaviour", 
+        "as --list but does not produce output and returns succes if --list",
+        "would have produced output."]))
+
+PARSER.add_argument("-H", "--hostname", dest="hostname", help="Use this host")
+PARSER.add_argument("-o", "--option", action="append", dest="option", 
+    help=" ".join(["Option to set, remove or query. When setting, use the", 
+    "format OptionName=OptionValue. Can be supplied multiple times."]))
+
+PARSER.add_argument("-f", "--file", dest="file", 
+    help=" ".join(["The ssh_config file to use. If omitted, use the default",
+        "ssh_config file."]))
+
+PARSER.add_argument("-S", "--ssh", dest="format", action="store_const",
+        const=OutFormats.SSH, help=" ".join(["Use ssh_config compatible",
+            "output. Useful if you want to use the output for constructing",
+            "a new ssh_config file"]))
+
+PARSER.add_argument("-p", dest="format", action="store_const",
+        const=OutFormats.MACHINE, help=" ".join(["Use a machine readable",
+            "output. It will use ':' as a delimiter, unless otherwise",
+            "specified. The fields will be in the form",
+            "<hostname>:<priority>:<option>:<value>, with ':' being",
+            "replaced by your delimiter of choice."]))
+PARSER.add_argument("-D", "--delimiter", dest="delimiter", default=":",
+        help="Delimiter to use when using -p.")
+
+
+opts= PARSER.parse_args()
+
+opts.action(opts)
