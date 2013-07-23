@@ -29,7 +29,7 @@
 import sys
 import os
 
-from be.zardof.sshconfig import SshConfig, SshConfigEntry, load_sshconfig
+from sshconfig import SshConfig, SshConfigEntry, load_sshconfig
 
 from argparse import ArgumentParser
 
